@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import multer from "multer";
 import fs from "fs";
+import dns from "dns";
 import nodemailer from "nodemailer";
 import { nanoid } from "nanoid";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
@@ -1333,24 +1334,48 @@ async function getTransporter() {
     const isGmail = process.env.SMTP_HOST?.includes('gmail.com');
     const port = parseInt(process.env.SMTP_PORT || "587");
     const secure = process.env.SMTP_SECURE === "true" || port === 465;
-    
+    const originalHost = isGmail ? 'smtp.gmail.com' : process.env.SMTP_HOST;
+
+    if (!originalHost) {
+      throw new Error("SMTP_HOST is not defined");
+    }
+
+    // Manual DNS lookup to force IPv4
+    const resolvedHost = await new Promise<string>((resolve, reject) => {
+      dns.lookup(originalHost, { family: 4 }, (err, address) => {
+        if (err) {
+          console.error(`[SMTP] DNS lookup failed for ${originalHost}:`, err);
+          reject(err);
+        } else {
+          console.log(`[SMTP] Resolved ${originalHost} to ${address}`);
+          resolve(address);
+        }
+      });
+    });
+
     const config: any = {
-      host: isGmail ? 'smtp.gmail.com' : process.env.SMTP_HOST,
+      host: resolvedHost,
       port: port,
       secure: secure,
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
       },
-      pool: true, // Use connection pooling for better reliability with many attachments
+      pool: true,
       maxConnections: 3,
       connectionTimeout: 30000,
       greetingTimeout: 30000,
       socketTimeout: 120000,
-      family: 4, // Force IPv4 to avoid ENETUNREACH on IPv6
+      family: 4,
+      tls: {
+        // Since we are connecting to an IP, we must provide the servername for SNI
+        servername: originalHost,
+        // Optional: if certificate validation fails on IP
+        // rejectUnauthorized: false 
+      }
     };
 
-    console.log(`[SMTP] Config: Host=${config.host}, Port=${port}, Secure=${secure}, isGmail=${isGmail}`);
+    console.log(`[SMTP] Config: Host=${config.host} (Original: ${originalHost}), Port=${port}, Secure=${secure}, isGmail=${isGmail}`);
 
     cachedTransporter = nodemailer.createTransport(config);
     return cachedTransporter;

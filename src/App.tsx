@@ -542,7 +542,7 @@ function PublicClaimUpdates({ claimId }: { claimId: string }) {
                                 party === 'appraiser' ? APPRAISER_DOCS.includes(field) :
                                 party === 'garage' ? GARAGE_DOCS.includes(field) : true;
               return hasFiles && isRelevant;
-            }).length > 0 && party !== 'customer' && (
+            }).length > 0 && (party === 'appraiser' || party === 'garage') && (
               <div className="space-y-3 pt-4 border-t border-slate-50">
                 <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
                   <CheckCircle2 size={16} className="text-emerald-500" />
