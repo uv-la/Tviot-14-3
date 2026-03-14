@@ -1442,25 +1442,6 @@ async function sendEmail(options: {
   attachments?: any[];
   bcc?: string;
 }) {
-  // 1. Try Resend first if configured
-  if (process.env.RESEND_API_KEY && process.env.RESEND_API_KEY !== 're_xxxxxxxxx') {
-    try {
-      return await sendEmailViaResend(options);
-    } catch (error: any) {
-      console.error("[Resend API] Error sending email, falling back:", error);
-    }
-  }
-
-  // 2. Try Gmail API
-  if (process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN) {
-    try {
-      return await sendEmailViaGmailAPI(options);
-    } catch (error: any) {
-      console.error("[Gmail API] Error sending email, falling back to SMTP:", error);
-      // Fallback to SMTP if Gmail API fails
-    }
-  }
-
   const transporter = await getTransporter();
   return transporter.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@claims-app.com",
