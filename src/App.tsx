@@ -2746,7 +2746,7 @@ ${shortPublicUrl}
       showToast('מגיש תביעה...', 'info');
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000);
+      const timeoutId = setTimeout(() => controller.abort(), 120000); // Increase to 120s
       
       const res = await fetch(`/api/claims/${editingClaim.id}/submit-claim`, {
         method: 'POST',

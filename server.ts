@@ -959,45 +959,68 @@ async function startServer() {
       const filteredAttachments = mailAttachments.filter(Boolean);
       console.log(`[Submit Claim] Sending email with ${filteredAttachments.length} attachments out of ${flattenedAttachments.length} requested.`);
 
-      try {
-        const sendMailPromise = transporter.sendMail({
-          from: process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@claims-app.com",
-          to,
-          bcc,
-          subject,
-          text: body,
-          attachments: filteredAttachments,
-        });
-
-        // Increase timeout to 120 seconds for many attachments
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("שליחת המייל ארכה זמן רב מדי (מעל 2 דקות). ייתכן שיש יותר מדי קבצים מצורפים או ששרת המייל איטי.")), 120000)
-        );
-
-        await Promise.race([sendMailPromise, timeoutPromise]);
-        console.log(`[Submit Claim] Email sent successfully to ${to}`);
-      } catch (mailError: any) {
-        console.error(`[Submit Claim] Nodemailer error:`, mailError);
-        throw new Error(`שגיאה בשליחת המייל: ${mailError.message}`);
-      }
-
-      await db.collection("claim_logs").insertOne({
-        claim_id: id,
-        username,
-        content: `התביעה הוגשה לחברת הביטוח ${tpInsurance?.name || claim.insurance_company} עם ${filteredAttachments.length} קבצים`,
-        created_at: new Date()
-      });
-
-      // Update claim status to 'בטיפול' and set submission date
+      // Update status to 'שליחה...' immediately
       await db.collection("claims").updateOne(
         { _id: new ObjectId(id) },
-        { $set: { status: 'בטיפול', submission_date: new Date() } }
+        { $set: { status: 'שליחה...', submission_date: new Date() } }
       );
 
-      res.json({ success: true });
+      // Send response to client immediately to avoid Render's 30s timeout
+      res.json({ success: true, message: "תהליך השליחה החל ברקע" });
+
+      // Continue email sending in the background
+      (async () => {
+        try {
+          const sendMailPromise = transporter.sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@claims-app.com",
+            to,
+            bcc,
+            subject,
+            text: body,
+            attachments: filteredAttachments,
+          });
+
+          // Background timeout of 5 minutes
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error("שליחת המייל ארכה זמן רב מדי")), 300000)
+          );
+
+          await Promise.race([sendMailPromise, timeoutPromise]);
+          console.log(`[Submit Claim] Background email sent successfully to ${to}`);
+
+          await db.collection("claim_logs").insertOne({
+            claim_id: id,
+            username,
+            content: `התביעה הוגשה בהצלחה לחברת הביטוח ${tpInsurance?.name || claim.insurance_company} עם ${filteredAttachments.length} קבצים`,
+            created_at: new Date()
+          });
+
+          await db.collection("claims").updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status: 'בטיפול' } }
+          );
+        } catch (mailError: any) {
+          console.error(`[Submit Claim] Background email error:`, mailError);
+          
+          await db.collection("claim_logs").insertOne({
+            claim_id: id,
+            username,
+            content: `שגיאה בשליחת התביעה: ${mailError.message}`,
+            created_at: new Date(),
+            is_error: true
+          });
+
+          await db.collection("claims").updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status: 'שגיאה בשליחה' } }
+          );
+        }
+      })();
     } catch (error: any) {
       console.error("Submit claim error:", error);
-      res.status(500).json({ error: error.message });
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message });
+      }
     }
   });
 
@@ -1340,15 +1363,19 @@ async function getTransporter() {
       throw new Error("SMTP_HOST is not defined");
     }
 
-    // Manual DNS lookup to force IPv4
+    // Manual DNS lookup to force IPv4 using resolve4 (more reliable than lookup for forcing IPv4)
     const resolvedHost = await new Promise<string>((resolve, reject) => {
-      dns.lookup(originalHost, { family: 4 }, (err, address) => {
-        if (err) {
-          console.error(`[SMTP] DNS lookup failed for ${originalHost}:`, err);
-          reject(err);
+      dns.resolve4(originalHost, (err, addresses) => {
+        if (err || !addresses || addresses.length === 0) {
+          console.error(`[SMTP] DNS resolve4 failed for ${originalHost}:`, err);
+          // Fallback to lookup if resolve4 fails
+          dns.lookup(originalHost, { family: 4 }, (err2, address) => {
+            if (err2) reject(err2);
+            else resolve(address);
+          });
         } else {
-          console.log(`[SMTP] Resolved ${originalHost} to ${address}`);
-          resolve(address);
+          console.log(`[SMTP] Resolved ${originalHost} to ${addresses[0]} via resolve4`);
+          resolve(addresses[0]);
         }
       });
     });
@@ -1363,15 +1390,13 @@ async function getTransporter() {
       },
       pool: true,
       maxConnections: 3,
-      connectionTimeout: 30000,
-      greetingTimeout: 30000,
-      socketTimeout: 120000,
+      connectionTimeout: 60000, // 60s
+      greetingTimeout: 60000,   // 60s
+      socketTimeout: 120000,    // 120s
       family: 4,
       tls: {
-        // Since we are connecting to an IP, we must provide the servername for SNI
         servername: originalHost,
-        // Optional: if certificate validation fails on IP
-        // rejectUnauthorized: false 
+        rejectUnauthorized: false // Sometimes needed when connecting via IP
       }
     };
 
