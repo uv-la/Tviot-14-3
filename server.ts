@@ -12,6 +12,7 @@ import fontkit from "@pdf-lib/fontkit";
 import { MongoClient, ObjectId } from "mongodb";
 import https from "https";
 import { GoogleGenAI, Type } from "@google/genai";
+import { google } from "googleapis";
 import "dotenv/config";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -530,7 +531,6 @@ async function startServer() {
         try {
           const claim = await db.collection("claims").findOne({ _id: new ObjectId(id) });
           const adminEmail = "uv.levari@gmail.com";
-          const transporter = await getTransporter();
           
           // If multiple paths, we send all
           const paths = Array.isArray(uploadedPath) ? uploadedPath : [uploadedPath];
@@ -542,11 +542,10 @@ async function startServer() {
             };
           });
           
-          await transporter.sendMail({
-            from: process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@claims-app.com",
+          await sendEmail({
             to: adminEmail,
             subject: `תמונות שמאי חדשות - ${claim.customer_name} - רכב ${claim.car_number}`,
-            text: `התקבלו תמונות חדשות מהשמאי עבור הלקוח ${claim.customer_name}.\nמצורף הקובץ.`,
+            text: `התקבלות תמונות חדשות מהשמאי עבור הלקוח ${claim.customer_name}.\nמצורף הקובץ.`,
             attachments
           });
           console.log(`Appraiser photos sent to ${adminEmail}`);
@@ -899,7 +898,6 @@ async function startServer() {
       const agent = await db.collection("agents").findOne({ _id: ObjectId.isValid(claim.agent_id) ? new ObjectId(claim.agent_id) : null });
       const bcc = agent?.email;
 
-      const transporter = await getTransporter();
       const eventDate = claim.event_date ? new Date(claim.event_date).toLocaleDateString('he-IL') : '';
       const subject = `מספר תביעה : ${claim.claim_number || ''} תאריך אירוע : ${eventDate}`;
 
@@ -971,12 +969,9 @@ async function startServer() {
       // Continue email sending in the background
       (async () => {
         try {
-          console.log(`[Submit Claim] Verifying SMTP connection for ${to}...`);
-          await transporter.verify();
-          console.log(`[Submit Claim] SMTP connection verified. Sending mail...`);
+          console.log(`[Submit Claim] Sending mail via sendEmail...`);
 
-          const sendMailPromise = transporter.sendMail({
-            from: process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@claims-app.com",
+          const sendMailPromise = sendEmail({
             to,
             bcc,
             subject,
@@ -1299,10 +1294,8 @@ async function startServer() {
       // Send email to admin
       try {
         const adminEmail = "uv.levari@gmail.com";
-        const transporter = await getTransporter();
         
-        await transporter.sendMail({
-          from: process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@claims-app.com",
+        await sendEmail({
           to: adminEmail,
           subject: `שאלון שומרה חדש - ${formData.insured_name} - רכב ${formData.car_number}`,
           text: `התקבל שאלון שומרה חדש עבור הלקוח ${formData.insured_name}.\nמצורף הטופס המלא.`,
@@ -1328,6 +1321,75 @@ async function startServer() {
 
   // Helper to get email transporter
 let cachedTransporter: any = null;
+
+async function sendEmailViaGmailAPI(options: {
+  to: string;
+  subject: string;
+  text?: string;
+  html?: string;
+  attachments?: any[];
+  bcc?: string;
+}) {
+  console.log(`[Gmail API] Sending email to ${options.to}`);
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GMAIL_CLIENT_ID,
+    process.env.GMAIL_CLIENT_SECRET,
+    process.env.APP_URL // Redirect URI
+  );
+
+  oauth2Client.setCredentials({
+    refresh_token: process.env.GMAIL_REFRESH_TOKEN
+  });
+
+  const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+  // We use nodemailer to compose the RFC 2822 message
+  const MailComposer = (await import("nodemailer/lib/mail-composer/index.js")).default;
+  const mail = new MailComposer({
+    from: process.env.GMAIL_USER || process.env.SMTP_USER || "noreply@claims-app.com",
+    ...options
+  });
+
+  const message = await mail.compile().build();
+  const encodedMessage = Buffer.from(message)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
+  const res = await gmail.users.messages.send({
+    userId: 'me',
+    requestBody: {
+      raw: encodedMessage
+    }
+  });
+
+  return res.data;
+}
+
+async function sendEmail(options: {
+  to: string;
+  subject: string;
+  text?: string;
+  html?: string;
+  attachments?: any[];
+  bcc?: string;
+}) {
+  if (process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN) {
+    try {
+      return await sendEmailViaGmailAPI(options);
+    } catch (error: any) {
+      console.error("[Gmail API] Error sending email, falling back to SMTP:", error);
+      // Fallback to SMTP if Gmail API fails
+    }
+  }
+
+  const transporter = await getTransporter();
+  return transporter.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@claims-app.com",
+    ...options
+  });
+}
 
 async function getTransporter() {
   if (cachedTransporter) return cachedTransporter;
@@ -1412,7 +1474,6 @@ async function getTransporter() {
     const { to, subject, body, claimId, username, attachments } = req.body;
     
     try {
-      const transporter = await getTransporter();
       const { attachmentNames } = req.body;
 
       // Find user email for BCC
@@ -1475,8 +1536,7 @@ async function getTransporter() {
       const filteredAttachments = mailAttachments.filter(Boolean);
       console.log(`[Send Email] Sending email with ${filteredAttachments.length} attachments out of ${flattenedAttachments.length} requested.`);
 
-      const info = await transporter.sendMail({
-        from: process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@claims-app.com",
+      const info = await sendEmail({
         to,
         bcc,
         subject,
