@@ -13,6 +13,7 @@ import { MongoClient, ObjectId } from "mongodb";
 import https from "https";
 import { GoogleGenAI, Type } from "@google/genai";
 import { google } from "googleapis";
+import { Resend } from 'resend';
 import "dotenv/config";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1330,27 +1331,49 @@ async function sendEmailViaGmailAPI(options: {
   attachments?: any[];
   bcc?: string;
 }) {
-  console.log(`[Gmail API] Sending email to ${options.to}`);
+  const clientId = process.env.GMAIL_CLIENT_ID?.trim();
+  const clientSecret = process.env.GMAIL_CLIENT_SECRET?.trim();
+  const refreshToken = process.env.GMAIL_REFRESH_TOKEN?.trim();
+  const userEmail = process.env.GMAIL_USER?.trim() || process.env.SMTP_USER?.trim();
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error("Missing Gmail API credentials (ID, Secret, or Refresh Token)");
+  }
+
+  console.log(`[Gmail API] Attempting to send email to ${options.to} using ${userEmail}`);
+  
   const oauth2Client = new google.auth.OAuth2(
-    process.env.GMAIL_CLIENT_ID,
-    process.env.GMAIL_CLIENT_SECRET,
-    process.env.APP_URL // Redirect URI
+    clientId,
+    clientSecret,
+    "https://developers.google.com/oauthplayground" // Match the redirect URI used to get the token
   );
 
   oauth2Client.setCredentials({
-    refresh_token: process.env.GMAIL_REFRESH_TOKEN
+    refresh_token: refreshToken
   });
 
   const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
-  // We use nodemailer to compose the RFC 2822 message
-  const MailComposer = (await import("nodemailer/lib/mail-composer/index.js")).default;
-  const mail = new MailComposer({
-    from: process.env.GMAIL_USER || process.env.SMTP_USER || "noreply@claims-app.com",
-    ...options
+  // Use nodemailer with streamTransport to build the RFC 2822 message safely
+  const buildTransporter = nodemailer.createTransport({
+    streamTransport: true,
+    newline: 'unix',
+    buffer: true
   });
 
-  const message = await mail.compile().build();
+  const mailOptions = {
+    from: userEmail,
+    to: options.to,
+    subject: options.subject,
+    text: options.text,
+    html: options.html,
+    attachments: options.attachments,
+    bcc: options.bcc
+  };
+
+  const info: any = await buildTransporter.sendMail(mailOptions);
+  const message = info.message; // This is a Buffer containing the raw RFC 2822 message
+
   const encodedMessage = Buffer.from(message)
     .toString('base64')
     .replace(/\+/g, '-')
@@ -1367,6 +1390,50 @@ async function sendEmailViaGmailAPI(options: {
   return res.data;
 }
 
+async function sendEmailViaResend(options: {
+  to: string;
+  subject: string;
+  text?: string;
+  html?: string;
+  attachments?: any[];
+  bcc?: string;
+}) {
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  if (!apiKey || apiKey === 're_xxxxxxxxx') {
+    throw new Error("Missing or placeholder Resend API key");
+  }
+
+  console.log(`[Resend API] Sending email to ${options.to}`);
+  const resend = new Resend(apiKey);
+
+  // Map attachments if they exist
+  const resendAttachments = options.attachments?.map(att => {
+    if (att.path && fs.existsSync(att.path)) {
+      return {
+        filename: att.filename,
+        content: fs.readFileSync(att.path)
+      };
+    }
+    return att;
+  });
+
+  const { data, error } = await resend.emails.send({
+    from: process.env.SMTP_FROM || 'onboarding@resend.dev',
+    to: options.to,
+    subject: options.subject,
+    text: options.text,
+    html: options.html || options.text,
+    attachments: resendAttachments,
+    bcc: options.bcc
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
 async function sendEmail(options: {
   to: string;
   subject: string;
@@ -1375,6 +1442,16 @@ async function sendEmail(options: {
   attachments?: any[];
   bcc?: string;
 }) {
+  // 1. Try Resend first if configured
+  if (process.env.RESEND_API_KEY && process.env.RESEND_API_KEY !== 're_xxxxxxxxx') {
+    try {
+      return await sendEmailViaResend(options);
+    } catch (error: any) {
+      console.error("[Resend API] Error sending email, falling back:", error);
+    }
+  }
+
+  // 2. Try Gmail API
   if (process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN) {
     try {
       return await sendEmailViaGmailAPI(options);
