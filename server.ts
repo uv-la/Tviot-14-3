@@ -971,6 +971,10 @@ async function startServer() {
       // Continue email sending in the background
       (async () => {
         try {
+          console.log(`[Submit Claim] Verifying SMTP connection for ${to}...`);
+          await transporter.verify();
+          console.log(`[Submit Claim] SMTP connection verified. Sending mail...`);
+
           const sendMailPromise = transporter.sendMail({
             from: process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@claims-app.com",
             to,
@@ -1354,55 +1358,51 @@ async function getTransporter() {
       };
     }
   } else {
-    const isGmail = process.env.SMTP_HOST?.includes('gmail.com');
+    const isGmail = process.env.SMTP_HOST?.includes('gmail.com') || process.env.SMTP_USER?.includes('gmail.com');
     const port = parseInt(process.env.SMTP_PORT || "587");
     const secure = process.env.SMTP_SECURE === "true" || port === 465;
-    const originalHost = isGmail ? 'smtp.gmail.com' : process.env.SMTP_HOST;
+    const host = isGmail ? 'smtp.gmail.com' : process.env.SMTP_HOST;
 
-    if (!originalHost) {
+    if (!host) {
       throw new Error("SMTP_HOST is not defined");
     }
 
-    // Manual DNS lookup to force IPv4 using resolve4 (more reliable than lookup for forcing IPv4)
-    const resolvedHost = await new Promise<string>((resolve, reject) => {
-      dns.resolve4(originalHost, (err, addresses) => {
-        if (err || !addresses || addresses.length === 0) {
-          console.error(`[SMTP] DNS resolve4 failed for ${originalHost}:`, err);
-          // Fallback to lookup if resolve4 fails
-          dns.lookup(originalHost, { family: 4 }, (err2, address) => {
-            if (err2) reject(err2);
-            else resolve(address);
-          });
-        } else {
-          console.log(`[SMTP] Resolved ${originalHost} to ${addresses[0]} via resolve4`);
-          resolve(addresses[0]);
-        }
-      });
-    });
-
     const config: any = {
-      host: resolvedHost,
+      host: host,
       port: port,
       secure: secure,
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
       },
-      pool: true,
-      maxConnections: 3,
-      connectionTimeout: 60000, // 60s
-      greetingTimeout: 60000,   // 60s
-      socketTimeout: 120000,    // 120s
+      // Force IPv4 using family: 4 in the transport options
+      // This is usually enough for Nodemailer to avoid IPv6
       family: 4,
+      connectionTimeout: 60000,
+      greetingTimeout: 60000,
+      socketTimeout: 120000,
       tls: {
-        servername: originalHost,
-        rejectUnauthorized: false // Sometimes needed when connecting via IP
+        rejectUnauthorized: false // Help with certificate issues on some servers
       }
     };
 
-    console.log(`[SMTP] Config: Host=${config.host} (Original: ${originalHost}), Port=${port}, Secure=${secure}, isGmail=${isGmail}`);
-
-    cachedTransporter = nodemailer.createTransport(config);
+    // Use service: 'gmail' for Gmail accounts as it's more reliable
+    if (isGmail) {
+      console.log("[SMTP] Using Gmail service configuration");
+      const gmailConfig: any = {
+        service: 'gmail',
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        },
+        family: 4
+      };
+      cachedTransporter = nodemailer.createTransport(gmailConfig);
+    } else {
+      console.log(`[SMTP] Config: Host=${host}, Port=${port}, Secure=${secure}`);
+      cachedTransporter = nodemailer.createTransport(config);
+    }
+    
     return cachedTransporter;
   }
 }
