@@ -968,9 +968,9 @@ async function startServer() {
           attachments: filteredAttachments,
         });
 
-        // Timeout after 45 seconds
+        // Increase timeout to 120 seconds for many attachments
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("שליחת המייל ארכה זמן רב מדי. אנא בדוק את הגדרות ה-SMTP שלך או נסה שוב.")), 45000)
+          setTimeout(() => reject(new Error("שליחת המייל ארכה זמן רב מדי (מעל 2 דקות). ייתכן שיש יותר מדי קבצים מצורפים או ששרת המייל איטי.")), 120000)
         );
 
         await Promise.race([sendMailPromise, timeoutPromise]);
@@ -1335,37 +1335,24 @@ async function getTransporter() {
     const secure = process.env.SMTP_SECURE === "true" || port === 465;
     
     const config: any = {
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 30000,
+      host: isGmail ? 'smtp.gmail.com' : process.env.SMTP_HOST,
+      port: port,
+      secure: secure,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+      pool: true, // Use connection pooling for better reliability with many attachments
+      maxConnections: 3,
+      connectionTimeout: 30000,
+      greetingTimeout: 30000,
+      socketTimeout: 120000,
       family: 4, // Force IPv4 to avoid ENETUNREACH on IPv6
     };
 
-    console.log(`[SMTP] Config: Port=${port}, Secure=${secure}, isGmail=${isGmail}`);
+    console.log(`[SMTP] Config: Host=${config.host}, Port=${port}, Secure=${secure}, isGmail=${isGmail}`);
 
-    if (isGmail) {
-      cachedTransporter = nodemailer.createTransport({
-        host: 'smtp.gmail.com',
-        port: 465,
-        secure: true,
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
-        ...config
-      });
-    } else {
-      cachedTransporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: port,
-        secure: secure,
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
-        ...config
-      });
-    }
+    cachedTransporter = nodemailer.createTransport(config);
     return cachedTransporter;
   }
 }
