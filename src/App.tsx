@@ -542,7 +542,7 @@ function PublicClaimUpdates({ claimId }: { claimId: string }) {
                                 party === 'appraiser' ? APPRAISER_DOCS.includes(field) :
                                 party === 'garage' ? GARAGE_DOCS.includes(field) : true;
               return hasFiles && isRelevant;
-            }).length > 0 && (
+            }).length > 0 && party !== 'customer' && (
               <div className="space-y-3 pt-4 border-t border-slate-50">
                 <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
                   <CheckCircle2 size={16} className="text-emerald-500" />
@@ -552,8 +552,7 @@ function PublicClaimUpdates({ claimId }: { claimId: string }) {
                   {Object.keys(DOC_LABELS).filter(field => {
                     const val = claimInfo[field];
                     const hasFiles = Array.isArray(val) ? val.length > 0 : !!val;
-                    const isRelevant = party === 'customer' ? CUSTOMER_DOCS.includes(field) :
-                                      party === 'appraiser' ? APPRAISER_DOCS.includes(field) :
+                    const isRelevant = party === 'appraiser' ? APPRAISER_DOCS.includes(field) :
                                       party === 'garage' ? GARAGE_DOCS.includes(field) : true;
                     return hasFiles && isRelevant;
                   }).map((field) => (
