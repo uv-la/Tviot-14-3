@@ -902,7 +902,21 @@ async function startServer() {
       const eventDate = claim.event_date ? new Date(claim.event_date).toLocaleDateString('he-IL') : '';
       const subject = `מספר תביעה : ${claim.claim_number || ''} תאריך אירוע : ${eventDate}`;
 
-      const mailAttachments = await Promise.all((attachments || []).map(async (att: {path: string, name: string}) => {
+      const flattenedAttachments: { path: string, name: string }[] = [];
+      (attachments || []).forEach((att: any) => {
+        if (Array.isArray(att.path)) {
+          att.path.forEach((p: string, idx: number) => {
+            flattenedAttachments.push({
+              path: p,
+              name: att.name ? `${att.name}_${idx + 1}` : path.basename(p)
+            });
+          });
+        } else if (att.path) {
+          flattenedAttachments.push(att);
+        }
+      });
+
+      const mailAttachments = await Promise.all(flattenedAttachments.map(async (att) => {
         const filePath = att.path;
         const filename = path.basename(filePath);
         const localPath = path.join(uploadsDir, filename);
@@ -1347,19 +1361,51 @@ async function getTransporter() {
       const user = await db.collection("users").findOne({ username });
       const bcc = user?.email;
 
-      const mailAttachments = (attachments || []).map((filePath: string, index: number) => {
+      const flattenedAttachments: { path: string, name?: string }[] = [];
+      (attachments || []).forEach((item: any, index: number) => {
+        const name = attachmentNames && attachmentNames[index] ? attachmentNames[index] : null;
+        if (Array.isArray(item)) {
+          item.forEach((path, subIndex) => {
+            flattenedAttachments.push({ 
+              path, 
+              name: name ? `${name}_${subIndex + 1}` : null 
+            });
+          });
+        } else if (item) {
+          flattenedAttachments.push({ path: item, name });
+        }
+      });
+
+      const mailAttachments = await Promise.all(flattenedAttachments.map(async (att) => {
+        const filePath = att.path;
         const relativePath = filePath.startsWith('/') ? filePath.slice(1) : filePath;
         const absolutePath = path.join(__dirname, relativePath);
+        const filename = path.basename(filePath);
+        
+        // 1. Try disk
         if (fs.existsSync(absolutePath)) {
           return {
-            filename: attachmentNames && attachmentNames[index] 
-              ? `${attachmentNames[index]}${path.extname(filePath)}` 
-              : path.basename(filePath),
+            filename: att.name ? `${att.name}${path.extname(filePath)}` : filename,
             path: absolutePath,
           };
         }
+
+        // 2. Try MongoDB fallback
+        if (db) {
+          const dbFilename = path.basename(filePath);
+          const file = await db.collection("files").findOne({ filename: dbFilename });
+          if (file && file.data) {
+            return {
+              filename: att.name ? `${att.name}${path.extname(filePath)}` : filename,
+              content: file.data.buffer,
+              contentType: file.mimeType
+            };
+          }
+        }
         return null;
-      }).filter(Boolean);
+      }));
+
+      const filteredAttachments = mailAttachments.filter(Boolean);
 
       const info = await transporter.sendMail({
         from: process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@claims-app.com",
@@ -1367,7 +1413,7 @@ async function getTransporter() {
         bcc,
         subject,
         text: body,
-        attachments: mailAttachments,
+        attachments: filteredAttachments,
       });
 
       if (!process.env.SMTP_USER) {

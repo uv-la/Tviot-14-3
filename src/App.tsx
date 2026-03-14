@@ -260,7 +260,7 @@ const DOC_LABELS: Record<string, string> = {
 };
 
 const CUSTOMER_DOCS = [
-  'claim_form_path', 'policy_file_path', 'vehicle_license_path', 'driver_license_path', 
+  'claim_form_path', 'vehicle_license_path', 'driver_license_path', 
   'driver_license_back_path', 'id_copy_path', 'bank_confirmation_path', 'no_claims_path', 
   'police_report_path', 'consent_form_path', 'power_of_attorney_path', 'no_submission_path',
   'lien_confirmation_path', 'accountant_confirmation_path', 'demand_letter_path'
@@ -4704,7 +4704,7 @@ ${shortPublicUrl}
 
                         const isTotalLossOrTheft = formData.claim_type === 'טוטל לוסט' || formData.claim_type === 'גניבה';
                         const customerFields = [
-                          'claim_form_path', 'policy_file_path', 'vehicle_license_path', 'driver_license_path', 
+                          'claim_form_path', 'vehicle_license_path', 'driver_license_path', 
                           'driver_license_back_path', 'id_copy_path', 'bank_confirmation_path', 'no_claims_path', 
                           'police_report_path'
                         ];
