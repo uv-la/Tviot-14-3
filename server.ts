@@ -1304,6 +1304,8 @@ let cachedTransporter: any = null;
 async function getTransporter() {
   if (cachedTransporter) return cachedTransporter;
   
+  console.log(`[SMTP] Initializing transporter. Host: ${process.env.SMTP_HOST || 'Ethereal'}, User: ${process.env.SMTP_USER || 'None'}`);
+  
   if (!process.env.SMTP_USER) {
     console.log("No SMTP credentials found. Using Ethereal Email for testing...");
     try {
@@ -1329,11 +1331,17 @@ async function getTransporter() {
     }
   } else {
     const isGmail = process.env.SMTP_HOST?.includes('gmail.com');
+    const port = parseInt(process.env.SMTP_PORT || "587");
+    const secure = process.env.SMTP_SECURE === "true" || port === 465;
+    
     const config: any = {
       connectionTimeout: 10000,
       greetingTimeout: 10000,
       socketTimeout: 30000,
+      family: 4, // Force IPv4 to avoid ENETUNREACH on IPv6
     };
+
+    console.log(`[SMTP] Config: Port=${port}, Secure=${secure}, isGmail=${isGmail}`);
 
     if (isGmail) {
       cachedTransporter = nodemailer.createTransport({
@@ -1347,8 +1355,8 @@ async function getTransporter() {
     } else {
       cachedTransporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST,
-        port: parseInt(process.env.SMTP_PORT || "587"),
-        secure: process.env.SMTP_SECURE === "true",
+        port: port,
+        secure: secure,
         auth: {
           user: process.env.SMTP_USER,
           pass: process.env.SMTP_PASS,
