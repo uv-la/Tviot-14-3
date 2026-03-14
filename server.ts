@@ -904,15 +904,22 @@ async function startServer() {
 
       const flattenedAttachments: { path: string, name: string }[] = [];
       (attachments || []).forEach((att: any) => {
-        if (Array.isArray(att.path)) {
-          att.path.forEach((p: string, idx: number) => {
-            flattenedAttachments.push({
-              path: p,
-              name: att.name ? `${att.name}_${idx + 1}` : path.basename(p)
+        if (typeof att === 'string') {
+          flattenedAttachments.push({ path: att, name: path.basename(att) });
+        } else if (att && typeof att === 'object') {
+          if (Array.isArray(att.path)) {
+            att.path.forEach((p: string, idx: number) => {
+              flattenedAttachments.push({
+                path: p,
+                name: att.name ? `${att.name}_${idx + 1}${path.extname(p)}` : path.basename(p)
+              });
             });
-          });
-        } else if (att.path) {
-          flattenedAttachments.push(att);
+          } else if (att.path) {
+            flattenedAttachments.push({
+              path: att.path,
+              name: att.name || path.basename(att.path)
+            });
+          }
         }
       });
 
@@ -921,10 +928,12 @@ async function startServer() {
         const filename = path.basename(filePath);
         const localPath = path.join(uploadsDir, filename);
         
+        console.log(`[Submit Claim] Checking file: ${filename} at ${localPath}`);
+
         // 1. Try disk
         if (fs.existsSync(localPath)) {
           return {
-            filename: att.name || filename,
+            filename: att.name,
             path: localPath,
           };
         }
@@ -933,19 +942,21 @@ async function startServer() {
         if (db) {
           const file = await db.collection("files").findOne({ filename });
           if (file && file.data) {
+            console.log(`[Submit Claim] Found file in MongoDB: ${filename}`);
             return {
-              filename: att.name || filename,
+              filename: att.name,
               content: file.data.buffer,
               contentType: file.mimeType
             };
           }
         }
         
+        console.warn(`[Submit Claim] File not found: ${filename}`);
         return null;
       }));
 
       const filteredAttachments = mailAttachments.filter(Boolean);
-      console.log(`[Submit Claim] Processing ${filteredAttachments.length} attachments...`);
+      console.log(`[Submit Claim] Sending email with ${filteredAttachments.length} attachments out of ${flattenedAttachments.length} requested.`);
 
       try {
         const sendMailPromise = transporter.sendMail({
@@ -1361,51 +1372,61 @@ async function getTransporter() {
       const user = await db.collection("users").findOne({ username });
       const bcc = user?.email;
 
-      const flattenedAttachments: { path: string, name?: string }[] = [];
+      const flattenedAttachments: { path: string, name: string }[] = [];
       (attachments || []).forEach((item: any, index: number) => {
         const name = attachmentNames && attachmentNames[index] ? attachmentNames[index] : null;
-        if (Array.isArray(item)) {
-          item.forEach((path, subIndex) => {
+        
+        if (typeof item === 'string') {
+          flattenedAttachments.push({ path: item, name: name || path.basename(item) });
+        } else if (Array.isArray(item)) {
+          item.forEach((p, subIndex) => {
             flattenedAttachments.push({ 
-              path, 
-              name: name ? `${name}_${subIndex + 1}` : null 
+              path: p, 
+              name: name ? `${name}_${subIndex + 1}${path.extname(p)}` : path.basename(p)
             });
           });
-        } else if (item) {
-          flattenedAttachments.push({ path: item, name });
+        } else if (item && typeof item === 'object' && item.path) {
+          flattenedAttachments.push({
+            path: item.path,
+            name: item.name || name || path.basename(item.path)
+          });
         }
       });
 
       const mailAttachments = await Promise.all(flattenedAttachments.map(async (att) => {
         const filePath = att.path;
-        const relativePath = filePath.startsWith('/') ? filePath.slice(1) : filePath;
-        const absolutePath = path.join(__dirname, relativePath);
         const filename = path.basename(filePath);
+        const localPath = path.join(uploadsDir, filename);
         
+        console.log(`[Send Email] Checking file: ${filename} at ${localPath}`);
+
         // 1. Try disk
-        if (fs.existsSync(absolutePath)) {
+        if (fs.existsSync(localPath)) {
           return {
-            filename: att.name ? `${att.name}${path.extname(filePath)}` : filename,
-            path: absolutePath,
+            filename: att.name,
+            path: localPath,
           };
         }
 
         // 2. Try MongoDB fallback
         if (db) {
-          const dbFilename = path.basename(filePath);
-          const file = await db.collection("files").findOne({ filename: dbFilename });
+          const file = await db.collection("files").findOne({ filename });
           if (file && file.data) {
+            console.log(`[Send Email] Found file in MongoDB: ${filename}`);
             return {
-              filename: att.name ? `${att.name}${path.extname(filePath)}` : filename,
+              filename: att.name,
               content: file.data.buffer,
               contentType: file.mimeType
             };
           }
         }
+        
+        console.warn(`[Send Email] File not found: ${filename}`);
         return null;
       }));
 
       const filteredAttachments = mailAttachments.filter(Boolean);
+      console.log(`[Send Email] Sending email with ${filteredAttachments.length} attachments out of ${flattenedAttachments.length} requested.`);
 
       const info = await transporter.sendMail({
         from: process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@claims-app.com",

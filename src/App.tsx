@@ -287,7 +287,7 @@ function PublicClaimUpdates({ claimId }: { claimId: string }) {
 
   // Get party from URL
   const urlParams = new URLSearchParams(window.location.search);
-  const party = urlParams.get('party') as 'customer' | 'appraiser' | 'garage' | null;
+  const party = (urlParams.get('party') || urlParams.get('p')) as 'customer' | 'appraiser' | 'garage' | null;
 
   const fetchData = async () => {
     try {
