@@ -2179,8 +2179,12 @@ ${statusLink}
     }
   };
 
-  const downloadAllFiles = async (claimToDownload?: Claim) => {
-    const claim = claimToDownload || editingClaim;
+  const downloadAllFiles = async (claimToDownload?: any) => {
+    // Check if claimToDownload is actually a claim object and not an event
+    const claim = (claimToDownload && typeof claimToDownload === 'object' && 'id' in claimToDownload) 
+      ? claimToDownload as Claim 
+      : editingClaim;
+      
     if (!claim) return;
     
     const zip = new JSZip();
@@ -2716,14 +2720,8 @@ ${shortPublicUrl}
           setIsWhatsAppModalOpen(true);
         } else {
           const formattedDate = formatDate(formData.claim_date);
-          setEmailFormData({
-            to: email,
-            subject: `שם מבוטח : ${formData.customer_name} : מספר תביעה : ${formData.claim_number || ''} : ותאריך אירוע : ${formattedDate}`,
-            body: message.replace(/\n/g, '<br>').replace(shortPublicUrl, `<a href="${shortPublicUrl}" style="color: #4f46e5; font-weight: bold; text-decoration: underline;">כנס ללינק</a>`),
-            attachments: []
-          });
-          setEmailStep('ask');
-          setIsEmailModalOpen(true);
+          const subject = `שם מבוטח : ${formData.customer_name} : מספר תביעה : ${formData.claim_number || ''} : ותאריך אירוע : ${formattedDate}`;
+          window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}`;
         }
       } catch (err) {
         console.error("Failed to auto-save before sending request", err);
@@ -2762,14 +2760,8 @@ ${shortPublicUrl}
 
     if (type === 'email') {
       const formattedDate = formatDate(formData.claim_date);
-      setEmailFormData({
-        to: email,
-        subject: `שם מבוטח : ${formData.customer_name} : מספר תביעה : ${formData.claim_number || ''} : ותאריך אירוע : ${formattedDate}`,
-        body: `שלום ${name},\n\nבהמשך לטיפול בתביעה מספר ${formData.claim_number || ''} עבור רכב ${formData.car_number}...\n\nבברכה,\nצוות התביעות`,
-        attachments: []
-      });
-      setEmailStep('edit');
-      setIsEmailModalOpen(true);
+      const subject = `שם מבוטח : ${formData.customer_name} : מספר תביעה : ${formData.claim_number || ''} : ותאריך אירוע : ${formattedDate}`;
+      window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}`;
     } else {
       setWhatsAppFormData({
         to: to,
@@ -2788,13 +2780,7 @@ ${shortPublicUrl}
     const formattedDate = formatDate(editingClaim.claim_date);
     const subject = encodeURIComponent(`הגשת תביעה - שם מבוטח : ${editingClaim.customer_name} : מספר תביעה : ${editingClaim.claim_number || ''} : ותאריך אירוע : ${formattedDate}`);
     
-    let attachmentNote = '';
-    if (submitAttachments.length > 0) {
-      attachmentNote = '\n\nשים לב: עליך לצרף ידנית את הקבצים הבאים:\n' + submitAttachments.map(f => `- ${f.name}`).join('\n');
-    }
-    
-    const body = encodeURIComponent(submitBody + attachmentNote);
-    const mailtoUrl = `mailto:${to}?subject=${subject}&body=${body}`;
+    const mailtoUrl = `mailto:${to}?subject=${subject}`;
     
     window.location.href = mailtoUrl;
 
@@ -3555,19 +3541,12 @@ ${shortPublicUrl}
                         )}
                         <button 
                           onClick={() => {
-                            setEditingClaim(claim);
                             const formattedDate = formatDate(claim.claim_date);
-                            // Find 3rd party insurance email
                             const tpInsuranceName = claim.third_party_insurance_company;
                             const tpEntity = entities.find(e => e.type === 'insurance' && e.name === tpInsuranceName);
-                            
-                            setEmailFormData({
-                              to: tpEntity?.email || claim.customer_email || '',
-                              subject: `שם מבוטח : ${claim.customer_name} : מספר תביעה : ${claim.claim_number || ''} : ותאריך אירוע : ${formattedDate}`,
-                              body: `שלום ${claim.customer_name},\n\nברצוננו לעדכן כי סטטוס התביעה שלך הוא: ${claim.status}.`
-                            });
-                            setEmailStep('edit');
-                            setIsEmailModalOpen(true);
+                            const to = tpEntity?.email || claim.customer_email || '';
+                            const subject = `שם מבוטח : ${claim.customer_name} : מספר תביעה : ${claim.claim_number || ''} : ותאריך אירוע : ${formattedDate}`;
+                            window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}`;
                           }}
                           className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
                           title="שלח מייל"
@@ -3714,69 +3693,69 @@ ${shortPublicUrl}
               <table className="w-full text-right border-collapse">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="px-2 py-3 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('customer_name')}>
+                    <th className="px-2 py-1 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('customer_name')}>
                       <div className="flex items-center gap-1">
                         מבוטח
                         {sortBy.field === 'customer_name' && (sortBy.direction === 'asc' ? <ChevronRight size={14} className="rotate-90" /> : <ChevronRight size={14} className="-rotate-90" />)}
                       </div>
                     </th>
-                    <th className="px-2 py-3 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('car_number')}>
+                    <th className="px-2 py-1 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('car_number')}>
                       <div className="flex items-center gap-1">
                         רכב
                         {sortBy.field === 'car_number' && (sortBy.direction === 'asc' ? <ChevronRight size={14} className="rotate-90" /> : <ChevronRight size={14} className="-rotate-90" />)}
                       </div>
                     </th>
-                    <th className="px-2 py-3 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('claim_type')}>
+                    <th className="px-2 py-1 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('claim_type')}>
                       <div className="flex items-center gap-1">
                         סוג תביעה
                         {sortBy.field === 'claim_type' && (sortBy.direction === 'asc' ? <ChevronRight size={14} className="rotate-90" /> : <ChevronRight size={14} className="-rotate-90" />)}
                       </div>
                     </th>
-                    <th className="px-2 py-3 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('insurance_company')}>
+                    <th className="px-2 py-1 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('insurance_company')}>
                       <div className="flex items-center gap-1">
                         חברת ביטוח
                         {sortBy.field === 'insurance_company' && (sortBy.direction === 'asc' ? <ChevronRight size={14} className="rotate-90" /> : <ChevronRight size={14} className="-rotate-90" />)}
                       </div>
                     </th>
-                    <th className="px-2 py-3 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('third_party_insurance_company')}>
+                    <th className="px-2 py-1 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('third_party_insurance_company')}>
                       <div className="flex items-center gap-1">
                         צד ג'
                         {sortBy.field === 'third_party_insurance_company' && (sortBy.direction === 'asc' ? <ChevronRight size={14} className="rotate-90" /> : <ChevronRight size={14} className="-rotate-90" />)}
                       </div>
                     </th>
-                    <th className="px-2 py-3 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('claim_date')}>
+                    <th className="px-2 py-1 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('claim_date')}>
                       <div className="flex items-center gap-1">
                         תאריך מקרה
                         {sortBy.field === 'claim_date' && (sortBy.direction === 'asc' ? <ChevronRight size={14} className="rotate-90" /> : <ChevronRight size={14} className="-rotate-90" />)}
                       </div>
                     </th>
-                    <th className="px-2 py-3 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('claim_value')}>
+                    <th className="px-2 py-1 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('claim_value')}>
                       <div className="flex items-center gap-1">
                         סכום
                         {sortBy.field === 'claim_value' && (sortBy.direction === 'asc' ? <ChevronRight size={14} className="rotate-90" /> : <ChevronRight size={14} className="-rotate-90" />)}
                       </div>
                     </th>
-                    <th className="px-2 py-3 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('status')}>
+                    <th className="px-2 py-1 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('status')}>
                       <div className="flex items-center gap-1">
                         סטטוס
                         {sortBy.field === 'status' && (sortBy.direction === 'asc' ? <ChevronRight size={14} className="rotate-90" /> : <ChevronRight size={14} className="-rotate-90" />)}
                       </div>
                     </th>
-                    <th className="px-2 py-3 text-sm font-bold text-slate-700">מסמכים</th>
-                    <th className="px-2 py-3 text-sm font-bold text-slate-700">טיפול אחרון</th>
-                    <th className="px-2 py-3 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('follow_up_date')}>
+                    <th className="px-2 py-1 text-sm font-bold text-slate-700">מסמכים</th>
+                    <th className="px-2 py-1 text-sm font-bold text-slate-700">טיפול אחרון</th>
+                    <th className="px-2 py-1 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('follow_up_date')}>
                       <div className="flex items-center gap-1">
                         טיפול הבא
                         {sortBy.field === 'follow_up_date' && (sortBy.direction === 'asc' ? <ChevronRight size={14} className="rotate-90" /> : <ChevronRight size={14} className="-rotate-90" />)}
                       </div>
                     </th>
-                    <th className="px-2 py-3 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('estimated_processing_days')}>
+                    <th className="px-2 py-1 text-sm font-bold text-slate-700 cursor-pointer hover:bg-slate-100" onClick={() => handleSort('estimated_processing_days')}>
                       <div className="flex items-center gap-1">
                         זמן טיפול משוער
                         {sortBy.field === 'estimated_processing_days' && (sortBy.direction === 'asc' ? <ChevronRight size={14} className="rotate-90" /> : <ChevronRight size={14} className="-rotate-90" />)}
                       </div>
                     </th>
-                    <th className="px-2 py-3 text-sm font-bold text-slate-700">פעולות</th>
+                    <th className="px-2 py-1 text-sm font-bold text-slate-700">פעולות</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -3784,7 +3763,7 @@ ${shortPublicUrl}
                     const isDocsComplete = claim.requested_docs && claim.requested_docs.length > 0 && claim.requested_docs.every(field => !!(claim as any)[field]);
                     return (
                       <tr key={claim.id} onClick={() => openModal(claim)} className="hover:bg-slate-50 transition-colors cursor-pointer">
-                        <td className="px-2 py-3 max-w-[150px]">
+                        <td className="px-2 py-1 max-w-[150px]">
                           <div className="flex items-center gap-3">
                             <div className="flex flex-col gap-1 shrink-0 items-center justify-center w-5">
                               <span 
@@ -3803,50 +3782,51 @@ ${shortPublicUrl}
                             </div>
                           </div>
                         </td>
-                      <td className="px-2 py-3 max-w-[120px]">
+                      <td className="px-2 py-1 max-w-[120px]">
                         <div className="text-sm text-slate-700 font-medium truncate" title={claim.car_number}>{claim.car_number}</div>
                         <div className="text-[10px] text-slate-500 truncate" title={claim.car_model}>{claim.car_model}</div>
                       </td>
-                      <td className="px-2 py-3 text-xs text-slate-600 truncate max-w-[100px]" title={claim.claim_type}>{claim.claim_type}</td>
-                      <td className="px-2 py-3 text-xs text-slate-600 truncate max-w-[120px]" title={claim.insurance_company}>{claim.insurance_company}</td>
-                      <td className="px-2 py-3 text-xs text-slate-600 truncate max-w-[120px]" title={claim.third_party_insurance_company || ''}>{claim.third_party_insurance_company || '-'}</td>
-                      <td className="px-2 py-3 text-xs text-slate-600">{formatDate(claim.claim_date)}</td>
-                      <td className="px-2 py-3 text-xs text-slate-600 font-bold">₪{(claim.claim_value || 0).toLocaleString()}</td>
-                      <td className="px-2 py-3">
+                      <td className="px-2 py-1 text-xs text-slate-600 truncate max-w-[100px]" title={claim.claim_type}>{claim.claim_type}</td>
+                      <td className="px-2 py-1 text-xs text-slate-600 truncate max-w-[120px]" title={claim.insurance_company}>{claim.insurance_company}</td>
+                      <td className="px-2 py-1 text-xs text-slate-600 truncate max-w-[120px]" title={claim.third_party_insurance_company || ''}>{claim.third_party_insurance_company || '-'}</td>
+                      <td className="px-2 py-1 text-xs text-slate-600">{formatDate(claim.claim_date)}</td>
+                      <td className="px-2 py-1 text-xs text-slate-600 font-bold">₪{(claim.claim_value || 0).toLocaleString()}</td>
+                      <td className="px-2 py-1">
                         <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${getStatusColor(claim.status)}`}>
                           {claim.status}
                         </span>
                       </td>
-                      <td className="px-2 py-3 relative" onClick={(e) => e.stopPropagation()}>
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setOpenDocListId(openDocListId === claim.id ? null : claim.id);
-                          }}
-                          className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold transition-colors ${
-                            getClaimDocuments(claim).length > 0 
-                              ? 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100' 
-                              : 'bg-slate-50 text-slate-400 cursor-not-allowed'
-                          }`}
-                          disabled={getClaimDocuments(claim).length === 0}
-                        >
-                          <FileText size={14} />
-                          <span>{getClaimDocuments(claim).length} מסמכים</span>
-                        </button>
-                        
-                        {getClaimDocuments(claim).length > 0 && (
-                          <button
+                      <td className="px-2 py-1 relative" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-1">
+                          <button 
                             onClick={(e) => {
                               e.stopPropagation();
-                              downloadAllFiles(claim);
+                              setOpenDocListId(openDocListId === claim.id ? null : claim.id);
                             }}
-                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors mt-1"
-                            title="הורד את כל הקבצים בתיקייה"
+                            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold transition-colors ${
+                              getClaimDocuments(claim).length > 0 
+                                ? 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100' 
+                                : 'bg-slate-50 text-slate-400 cursor-not-allowed'
+                            }`}
+                            disabled={getClaimDocuments(claim).length === 0}
                           >
-                            <Download size={12} />
-                            הורד הכל
+                            <FileText size={14} />
+                            <span>{getClaimDocuments(claim).length} מסמכים</span>
                           </button>
-                        )}
+                          
+                          {getClaimDocuments(claim).length > 0 && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                downloadAllFiles(claim);
+                              }}
+                              className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+                              title="הורד את כל הקבצים בתיקייה"
+                            >
+                              <Download size={14} />
+                            </button>
+                          )}
+                        </div>
                         
                         <AnimatePresence>
                           {openDocListId === claim.id && (
@@ -3872,12 +3852,12 @@ ${shortPublicUrl}
                           )}
                         </AnimatePresence>
                       </td>
-                      <td className="px-2 py-3">
+                      <td className="px-2 py-1">
                         <div className="flex flex-col">
                           <span className="text-[10px] font-medium text-slate-700">{getDaysSinceLastActivity(claim)} ימים</span>
                         </div>
                       </td>
-                      <td className="px-2 py-3">
+                      <td className="px-2 py-1">
                         {claim.follow_up_date ? (
                           <div className="flex flex-col">
                             <span className={`text-[10px] font-bold ${(() => {
@@ -3906,7 +3886,7 @@ ${shortPublicUrl}
                           <span className="text-[10px] text-slate-400">-</span>
                         )}
                       </td>
-                      <td className="px-2 py-3">
+                      <td className="px-2 py-1">
                         <div className="flex flex-col">
                           <span className={`text-[10px] font-bold ${(() => {
                             const remaining = getRemainingProcessingDays(claim);
@@ -3921,7 +3901,7 @@ ${shortPublicUrl}
                           </span>
                         </div>
                       </td>
-                      <td className="px-2 py-3" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-2 py-1" onClick={(e) => e.stopPropagation()}>
                         <div className="flex gap-1">
                           <button onClick={() => handleWhatsAppClick(claim)} className="p-1 text-slate-400 hover:text-green-600 transition-colors" title="שלח וואטסאפ"><MessageCircle size={16} /></button>
                           {claim.insurance_company === 'שומרה' && (
@@ -3929,19 +3909,12 @@ ${shortPublicUrl}
                           )}
                           <button 
                             onClick={() => {
-                              setEditingClaim(claim);
                               const formattedDate = formatDate(claim.claim_date);
-                              // Find 3rd party insurance email
                               const tpInsuranceName = claim.third_party_insurance_company;
                               const tpEntity = entities.find(e => e.type === 'insurance' && e.name === tpInsuranceName);
-                              
-                              setEmailFormData({
-                                to: tpEntity?.email || claim.customer_email || '',
-                                subject: `שם מבוטח : ${claim.customer_name} : מספר תביעה : ${claim.claim_number || ''} : ותאריך אירוע : ${formattedDate}`,
-                                body: `שלום ${claim.customer_name},\n\nברצוננו לעדכן כי סטטוס התביעה שלך הוא: ${claim.status}.`
-                              });
-                              setEmailStep('edit');
-                              setIsEmailModalOpen(true);
+                              const to = tpEntity?.email || claim.customer_email || '';
+                              const subject = `שם מבוטח : ${claim.customer_name} : מספר תביעה : ${claim.claim_number || ''} : ותאריך אירוע : ${formattedDate}`;
+                              window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}`;
                             }}
                             className="p-1 text-slate-400 hover:text-indigo-600 transition-colors"
                             title="שלח מייל"
