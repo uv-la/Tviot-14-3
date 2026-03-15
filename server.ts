@@ -1422,8 +1422,8 @@ async function sendEmailViaResend(options: {
   });
 
   // Ensure we have a valid 'from' address. 
-  // If domain is not verified, Resend requires 'onboarding@resend.dev'
-  let fromAddress = process.env.SMTP_FROM || 'onboarding@resend.dev';
+  // Priority: RESEND_FROM > SMTP_FROM > onboarding@resend.dev
+  let fromAddress = process.env.RESEND_FROM || process.env.SMTP_FROM || 'onboarding@resend.dev';
   if (fromAddress.includes('claims-app.com') && !apiKey.startsWith('re_')) {
     // If it looks like a custom domain but we are using a placeholder or default key, 
     // it might fail. We'll keep it but log it.
