@@ -1442,6 +1442,27 @@ async function sendEmail(options: {
   attachments?: any[];
   bcc?: string;
 }) {
+  const provider = (process.env.EMAIL_SERVICE_PROVIDER || "smtp").toLowerCase().trim();
+  
+  console.log(`[Email Service] Using provider: ${provider}`);
+
+  if (provider === "resend") {
+    try {
+      return await sendEmailViaResend(options);
+    } catch (error: any) {
+      console.error("[Resend API] Error sending email, falling back to SMTP:", error);
+      // Fallback to SMTP if Resend fails
+    }
+  } else if (provider === "gmail") {
+    try {
+      return await sendEmailViaGmailAPI(options);
+    } catch (error: any) {
+      console.error("[Gmail API] Error sending email, falling back to SMTP:", error);
+      // Fallback to SMTP if Gmail fails
+    }
+  }
+
+  // Default to SMTP
   const transporter = await getTransporter();
   return transporter.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@claims-app.com",
