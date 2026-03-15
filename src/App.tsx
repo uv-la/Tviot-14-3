@@ -42,10 +42,13 @@ import {
   CheckCircle2,
   Paperclip,
   Eye,
-  Loader2
+  Loader2,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI, Type } from "@google/genai";
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 import Dashboard from './components/Dashboard';
 import Reports from './components/Reports';
 
@@ -2126,65 +2129,44 @@ ${statusLink}
       return;
     }
 
-    // Use selected attachments or default to all available if none selected?
-    // User said: "including option to choose from uploaded documents and attach to email"
-    const files = emailFormData.attachments.length > 0 ? emailFormData.attachments : [
-      editingClaim.claim_form_path,
-      editingClaim.appraiser_report_path,
-      editingClaim.driver_license_path,
-      editingClaim.vehicle_license_path,
-      editingClaim.appraiser_invoice_path,
-      editingClaim.appraiser_photos_path,
-      editingClaim.garage_invoice_path,
-      editingClaim.demand_letter_path
-    ].filter(Boolean);
+    // Construct mailto link
+    // Note: mailto does not support attachments reliably across all clients
+    const to = emailFormData.to;
+    const subject = encodeURIComponent(emailFormData.subject);
+    
+    // Add info about attachments to the body if any were selected
+    const selectedFiles = emailFormData.attachments.length > 0 ? emailFormData.attachments : [];
+    let attachmentNote = '';
+    if (selectedFiles.length > 0) {
+      attachmentNote = '\n\nשים לב: עליך לצרף ידנית את הקבצים הבאים:\n' + selectedFiles.map(f => {
+        const field = Object.keys(editingClaim).find(k => (editingClaim as any)[k] === f);
+        return `- ${field ? DOC_LABELS[field] : 'מסמך'}`;
+      }).join('\n');
+    }
 
-    setConfirmModal({
-      title: 'אישור שליחה',
-      message: `אני עומד לשלוח למייל שנבחר את הקבצים שסומנו (${files.length} קבצים), נא אישורך.`,
-      confirmText: 'שלח',
-      onConfirm: async () => {
-        setConfirmModal(null);
-        setIsSendingEmail(true);
-        try {
-          const response = await fetch('/api/send-email', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ...emailFormData,
-              claimId: editingClaim.id,
-              username: currentUser.username,
-              attachments: files,
-              attachmentNames: files.map(f => {
-                const field = Object.keys(editingClaim).find(k => (editingClaim as any)[k] === f);
-                return field ? DOC_LABELS[field] : 'מסמך';
-              })
-            }),
-          });
-          
-          if (response.ok) {
-            const data = await response.json();
-            setIsEmailModalOpen(false);
-            fetchLogs(editingClaim.id);
-            
-            if (data.previewUrl) {
-              showToast('המייל נשלח (מצב בדיקה). לחץ לצפייה במייל שנשלח', 'success');
-              window.open(data.previewUrl, '_blank');
-            } else {
-              showToast('המייל נשלח בהצלחה');
-            }
-          } else {
-            const errorData = await response.json().catch(() => ({}));
-            showToast(`שגיאה בשליחת המייל: ${response.status} ${errorData.error || ''}`, 'error');
-          }
-        } catch (error) {
-          console.error('Network error sending email:', error);
-          showToast('שגיאת רשת בשליחת המייל. אנא בדוק את החיבור לאינטרנט.', 'error');
-        } finally {
-          setIsSendingEmail(false);
-        }
-      }
-    });
+    const body = encodeURIComponent(emailFormData.body + attachmentNote);
+    const mailtoUrl = `mailto:${to}?subject=${subject}&body=${body}`;
+
+    // Open local email client
+    window.location.href = mailtoUrl;
+
+    // Log the action
+    try {
+      await fetch(`/api/claims/${editingClaim.id}/logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: currentUser.username,
+          content: `נפתח מייל מקומי עבור: ${to} בנושא: ${emailFormData.subject}`
+        }),
+      });
+      fetchLogs(editingClaim.id);
+    } catch (error) {
+      console.error('Error logging email action:', error);
+    }
+
+    setIsEmailModalOpen(false);
+    showToast('נפתח מייל מקומי במחשב שלך');
   };
 
   const fetchLogs = async (claimId: string | number) => {
@@ -2194,6 +2176,62 @@ ${statusLink}
       setClaimLogs(data);
     } catch (error) {
       console.error('Error fetching logs:', error);
+    }
+  };
+
+  const downloadAllFiles = async (claimToDownload?: Claim) => {
+    const claim = claimToDownload || editingClaim;
+    if (!claim) return;
+    
+    const zip = new JSZip();
+    const folderName = `${claim.car_number} - ${claim.customer_name}`;
+    const folder = zip.folder(folderName);
+    
+    if (!folder) return;
+
+    setIsSubmittingClaim(true);
+    showToast('מכין את כל הקבצים להורדה...', 'info');
+
+    try {
+      const downloadPromises = Object.entries(DOC_LABELS).map(async ([key, label]) => {
+        const path = (claim as any)[key];
+        if (!path) return;
+
+        const paths = Array.isArray(path) ? path : [path];
+        
+        await Promise.all(paths.map(async (p, index) => {
+          try {
+            const response = await fetch(p);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const blob = await response.blob();
+            
+            let extension = 'jpg';
+            const urlParts = p.split('.');
+            if (urlParts.length > 1) {
+              extension = urlParts.pop()?.split('?')[0] || 'jpg';
+            }
+            
+            const fileName = paths.length > 1 
+              ? `${label}_${index + 1}.${extension}`
+              : `${label}.${extension}`;
+            
+            folder.file(fileName, blob);
+          } catch (err) {
+            console.error(`Failed to download ${p}:`, err);
+          }
+        }));
+      });
+
+      await Promise.all(downloadPromises);
+      
+      const content = await zip.generateAsync({ type: 'blob' });
+      saveAs(content, `${folderName}.zip`);
+      showToast('הקבצים יורדו בהצלחה');
+    } catch (error) {
+      console.error('Error generating zip:', error);
+      showToast('שגיאה בהורדת הקבצים', 'error');
+    } finally {
+      setIsSubmittingClaim(false);
     }
   };
 
@@ -2677,9 +2715,10 @@ ${shortPublicUrl}
           });
           setIsWhatsAppModalOpen(true);
         } else {
+          const formattedDate = formatDate(formData.claim_date);
           setEmailFormData({
             to: email,
-            subject: `בקשת מסמכים - תביעת רכב ${formData.car_number}`,
+            subject: `שם מבוטח : ${formData.customer_name} : מספר תביעה : ${formData.claim_number || ''} : ותאריך אירוע : ${formattedDate}`,
             body: message.replace(/\n/g, '<br>').replace(shortPublicUrl, `<a href="${shortPublicUrl}" style="color: #4f46e5; font-weight: bold; text-decoration: underline;">כנס ללינק</a>`),
             attachments: []
           });
@@ -2702,7 +2741,10 @@ ${shortPublicUrl}
     
     if (recipient === 'tp_insurance') {
       to = formData.tp_agent_phone || '';
-      email = ''; // Need to find insurance email if possible
+      // Find 3rd party insurance email
+      const tpInsuranceName = formData.third_party_insurance_company;
+      const tpEntity = entities.find(e => e.type === 'insurance' && e.name === tpInsuranceName);
+      email = tpEntity?.email || '';
       name = formData.third_party_insurance_company || 'חברת ביטוח צד ג';
     } else if (recipient === 'garage') {
       to = formData.garage_phone || '';
@@ -2719,9 +2761,10 @@ ${shortPublicUrl}
     }
 
     if (type === 'email') {
+      const formattedDate = formatDate(formData.claim_date);
       setEmailFormData({
         to: email,
-        subject: `עדכון בנוגע לתביעה רכב ${formData.car_number}`,
+        subject: `שם מבוטח : ${formData.customer_name} : מספר תביעה : ${formData.claim_number || ''} : ותאריך אירוע : ${formattedDate}`,
         body: `שלום ${name},\n\nבהמשך לטיפול בתביעה מספר ${formData.claim_number || ''} עבור רכב ${formData.car_number}...\n\nבברכה,\nצוות התביעות`,
         attachments: []
       });
@@ -2740,48 +2783,41 @@ ${shortPublicUrl}
   const submitClaim = async () => {
     if (!editingClaim || isSubmittingClaim) return;
     
+    // Construct mailto link
+    const to = submitEmail;
+    const formattedDate = formatDate(editingClaim.claim_date);
+    const subject = encodeURIComponent(`הגשת תביעה - שם מבוטח : ${editingClaim.customer_name} : מספר תביעה : ${editingClaim.claim_number || ''} : ותאריך אירוע : ${formattedDate}`);
+    
+    let attachmentNote = '';
+    if (submitAttachments.length > 0) {
+      attachmentNote = '\n\nשים לב: עליך לצרף ידנית את הקבצים הבאים:\n' + submitAttachments.map(f => `- ${f.name}`).join('\n');
+    }
+    
+    const body = encodeURIComponent(submitBody + attachmentNote);
+    const mailtoUrl = `mailto:${to}?subject=${subject}&body=${body}`;
+    
+    window.location.href = mailtoUrl;
+
+    // Log the action
     try {
-      setIsSubmittingClaim(true);
-      console.log(`[Submit Claim] Starting submission for claim ${editingClaim.id}`);
-      showToast('מגיש תביעה...', 'info');
-      
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000); // Increase to 120s
-      
-      const res = await fetch(`/api/claims/${editingClaim.id}/submit-claim`, {
+      await fetch(`/api/claims/${editingClaim.id}/logs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: currentUser?.username,
-          body: submitBody,
-          attachments: submitAttachments,
-          to: submitEmail
+          content: `הוגשה תביעה (מייל מקומי) לחברת הביטוח: ${to}`
         }),
-        signal: controller.signal
       });
-      clearTimeout(timeoutId);
-      
-      console.log(`[Submit Claim] Response status: ${res.status}`);
-      
-      if (res.ok) {
-        showToast('התביעה הוגשה בהצלחה', 'success');
-        setIsSubmitModalOpen(false);
-        setSubmitBody('');
-        setSubmitEmail('');
-        setSubmitAttachments([]);
-        fetchClaims();
-        setIsModalOpen(false);
-      } else {
-        const err = await res.json();
-        console.error(`[Submit Claim] Server error:`, err);
-        showToast(`שגיאה בהגשת תביעה: ${err.error}`, 'error');
-      }
-    } catch (error: any) {
-      console.error('[Submit Claim] Network error:', error);
-      showToast(`שגיאה בתקשורת עם השרת: ${error.message}`, 'error');
-    } finally {
-      setIsSubmittingClaim(false);
+      fetchLogs(editingClaim.id);
+    } catch (e) {
+      console.error("Failed to log submission", e);
     }
+
+    setIsSubmitModalOpen(false);
+    setSubmitBody('');
+    setSubmitEmail('');
+    setSubmitAttachments([]);
+    showToast('נפתח מייל מקומי להגשת התביעה');
   };
 
   const handleAddSubmitAttachment = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -3521,9 +3557,13 @@ ${shortPublicUrl}
                           onClick={() => {
                             setEditingClaim(claim);
                             const formattedDate = formatDate(claim.claim_date);
+                            // Find 3rd party insurance email
+                            const tpInsuranceName = claim.third_party_insurance_company;
+                            const tpEntity = entities.find(e => e.type === 'insurance' && e.name === tpInsuranceName);
+                            
                             setEmailFormData({
-                              to: claim.customer_email || '',
-                              subject: `שם מבוטח : ${claim.customer_name}  מס. רישוי : ${claim.car_number}  תאריך : ${formattedDate}`,
+                              to: tpEntity?.email || claim.customer_email || '',
+                              subject: `שם מבוטח : ${claim.customer_name} : מספר תביעה : ${claim.claim_number || ''} : ותאריך אירוע : ${formattedDate}`,
                               body: `שלום ${claim.customer_name},\n\nברצוננו לעדכן כי סטטוס התביעה שלך הוא: ${claim.status}.`
                             });
                             setEmailStep('edit');
@@ -3794,6 +3834,20 @@ ${shortPublicUrl}
                           <span>{getClaimDocuments(claim).length} מסמכים</span>
                         </button>
                         
+                        {getClaimDocuments(claim).length > 0 && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              downloadAllFiles(claim);
+                            }}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors mt-1"
+                            title="הורד את כל הקבצים בתיקייה"
+                          >
+                            <Download size={12} />
+                            הורד הכל
+                          </button>
+                        )}
+                        
                         <AnimatePresence>
                           {openDocListId === claim.id && (
                             <motion.div 
@@ -3877,9 +3931,13 @@ ${shortPublicUrl}
                             onClick={() => {
                               setEditingClaim(claim);
                               const formattedDate = formatDate(claim.claim_date);
+                              // Find 3rd party insurance email
+                              const tpInsuranceName = claim.third_party_insurance_company;
+                              const tpEntity = entities.find(e => e.type === 'insurance' && e.name === tpInsuranceName);
+                              
                               setEmailFormData({
-                                to: claim.customer_email || '',
-                                subject: `שם מבוטח : ${claim.customer_name}  מס. רישוי : ${claim.car_number}  תאריך : ${formattedDate}`,
+                                to: tpEntity?.email || claim.customer_email || '',
+                                subject: `שם מבוטח : ${claim.customer_name} : מספר תביעה : ${claim.claim_number || ''} : ותאריך אירוע : ${formattedDate}`,
                                 body: `שלום ${claim.customer_name},\n\nברצוננו לעדכן כי סטטוס התביעה שלך הוא: ${claim.status}.`
                               });
                               setEmailStep('edit');
@@ -3935,13 +3993,27 @@ ${shortPublicUrl}
                     </button>
                   )}
                 </div>
-                <button 
-                  onClick={closeModal} 
-                  disabled={isAnalyzing}
-                  className={`text-slate-400 hover:text-slate-600 transition-colors p-1 hover:bg-slate-100 rounded-full ${isAnalyzing ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  <X size={24} />
-                </button>
+                <div className="flex items-center gap-2">
+                  {editingClaim && (
+                    <button
+                      type="button"
+                      onClick={downloadAllFiles}
+                      disabled={isSubmittingClaim}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 transition-all shadow-sm active:scale-95 disabled:opacity-50"
+                      title="הורד את כל קבצי התביעה"
+                    >
+                      <Download size={14} />
+                      הורד את כל הקבצים
+                    </button>
+                  )}
+                  <button 
+                    onClick={closeModal} 
+                    disabled={isAnalyzing}
+                    className={`text-slate-400 hover:text-slate-600 transition-colors p-1 hover:bg-slate-100 rounded-full ${isAnalyzing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
               </div>
 
               {/* Tabs */}
