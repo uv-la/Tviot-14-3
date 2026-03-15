@@ -1403,31 +1403,46 @@ async function sendEmailViaResend(options: {
     throw new Error("Missing or placeholder Resend API key");
   }
 
-  console.log(`[Resend API] Sending email to ${options.to}`);
+  console.log(`[Resend API] Attempting to send email to ${options.to}`);
   const resend = new Resend(apiKey);
 
-  // Map attachments if they exist
+  // Map attachments to Resend format
   const resendAttachments = options.attachments?.map(att => {
-    if (att.path && fs.existsSync(att.path)) {
-      return {
-        filename: att.filename,
-        content: fs.readFileSync(att.path)
-      };
+    const attachment: any = {
+      filename: att.filename
+    };
+
+    if (att.content) {
+      attachment.content = att.content;
+    } else if (att.path && fs.existsSync(att.path)) {
+      attachment.content = fs.readFileSync(att.path);
     }
-    return att;
+
+    return attachment;
   });
 
-  const { data, error } = await resend.emails.send({
-    from: process.env.SMTP_FROM || 'onboarding@resend.dev',
+  // Ensure we have a valid 'from' address. 
+  // If domain is not verified, Resend requires 'onboarding@resend.dev'
+  let fromAddress = process.env.SMTP_FROM || 'onboarding@resend.dev';
+  if (fromAddress.includes('claims-app.com') && !apiKey.startsWith('re_')) {
+    // If it looks like a custom domain but we are using a placeholder or default key, 
+    // it might fail. We'll keep it but log it.
+  }
+
+  const payload = {
+    from: fromAddress,
     to: options.to,
     subject: options.subject,
-    text: options.text,
-    html: options.html || options.text,
+    text: options.text || 'No text content provided',
+    html: options.html || options.text || '<p>No content provided</p>',
     attachments: resendAttachments,
     bcc: options.bcc
-  });
+  };
+
+  const { data, error } = await resend.emails.send(payload);
 
   if (error) {
+    console.error("[Resend API] Validation or Sending Error:", JSON.stringify(error, null, 2));
     throw error;
   }
 
